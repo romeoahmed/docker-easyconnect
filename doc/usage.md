@@ -2,6 +2,28 @@
 
 **启动参数里的`--device /dev/net/tun --cap-add NET_ADMIN`是不可少的。** 因为 VPN 要创建 tun 网络接口。
 
+## 在 ARM64 Podman 中运行 aTrust
+
+用 rootful Podman [构建镜像](build.md#构建带有-chromium-的-vnc-镜像)后，在同一连接下运行。第一行输入 VNC 密码（不回显）。
+
+```bash
+IFS= read -rs PASSWORD
+PASSWORD="${PASSWORD:?VNC 密码不能为空}" podman run -d --name atrust --http-proxy=false \
+    --device /dev/net/tun --cap-add NET_ADMIN --shm-size=256m \
+    --sysctl net.ipv4.conf.default.route_localnet=1 -e PASSWORD -e URLWIN=1 \
+    -p 127.0.0.1:15901:5901 -p 127.0.0.1:18888:8888 -p 127.0.0.1:11080:1080 \
+    localhost/atrust-chromium:2.5.16.41
+unset PASSWORD
+```
+
+用 VNC 连接 `127.0.0.1:15901`，在 aTrust 输入门户地址。若弹出认证链接，点击 **Copy**，粘贴到桌面内的 Chromium 完成登录。下次用 `podman start atrust` 启动已停止的容器。
+
+登录后，HTTP 代理地址为 `127.0.0.1:18888`。macOS 上可通过 SOCKS5 代理连接内网 SSH 主机。
+
+```bash
+ssh -o 'ProxyCommand=/usr/bin/nc -X 5 -x 127.0.0.1:11080 %h %p' user@host
+```
+
 ## 环境变量
 
 - `DISABLE_PKG_VERSION_XML`: 默认为空。设为非空时会阻止 EasyConnect 使用 `pkg_version.xml` 配置文件（通过将其设为 `/dev/null` 的软链接），从而绕过一些客户端和服务端版本不匹配的问题。注意这个选项并不能绕过[第三级](#easyconnect-版本选择)（如 `7.6.3` 中的 `3`）不匹配的问题，只能绕过第四级版本（如 `7.6.7.x` 中的 `x`）不匹配的问题。
@@ -29,7 +51,7 @@
 
 - `MAX_RETRY`: 最大重连次数，默认为空。
 
-- `NODANTED`: 默认为空。不为空时提供 socks5 代理的`danted`将不会启动（可用于和`--net host`参数配合，提供全局透明代理）。
+- `NODANTED`: 非空时关闭 SOCKS5 代理，可配合 `--net host` 使用。
 
 - `PING_ADDR`: 默认为空。用于定时 ping 的目的地址（域名、ip 皆可，但需要是 VPN 进行代理的地址），可用于保持 VPN 连接，留空时不做此操作。（服务端可能会配置成无流量通过 VPN 超过一定时间则自动断线，故用此方法可以保持更长时间在线）
 
@@ -74,11 +96,11 @@
 
 - `URLWIN`: 默认为空，此时当 VPN 前端想要调用浏览器时，不会弹窗，若该变量设为任何非空值，则会弹出一个包含链接的对话框供用户复制。
 
-- `USE_NOVNC`: 默认为空，不为空时将启动 noVNC 服务，可供用户在浏览器中访问 VPN 的图形界面，端口为 8080， 可用 -p 参数转发。
+- `USE_NOVNC`: 非空时在通用 VNC 镜像中启用 [noVNC](#novnc仅限带-vnc-的图形界面版)。
 
 - `VNC_SIZE`: 默认为空，为空时 VNC 服务分辨率为 `1110x620`（7.6.7 版 EasyConnect 登录后的默认窗口尺寸），可设置为自定义的 VNC 分辨率。
 
-- `CHROMIUM`: 默认为空，不为空时需运行装有 chromium 的镜像，详见 [build](./build.md#构建带有-chromium-的-VNC-镜像)
+- `CHROMIUM`: 非空时启动 Chromium。ARM64 aTrust 专用镜像默认启用。
 
 ## 服务说明
 
@@ -112,7 +134,7 @@ ip rule add iif lo table 3
 
 ### noVNC（仅限带 VNC 的图形界面版）
 
-带 VNC 的版本中，环境变量 `USE_NOVNC` 不留空会在 `8080` 端口开启 noVNC 的web服务。
+设置 `-e USE_NOVNC=1 -p 127.0.0.1:8080:8080` 后，可在宿主机浏览器打开 `http://127.0.0.1:8080`。
 
 ### 处理浏览器弹窗（仅限图形界面版）
 

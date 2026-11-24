@@ -15,6 +15,7 @@ docker-easyconnect
 ├─ doc: 文档
 │  └─ ...
 ├─ Dockerfile:       VNC 版镜像的 dockerfile
+├─ Dockerfile.atrust-chromium: 带 Chromium 的 ARM64 aTrust 镜像
 ├─ Dockerfile.build: 构建镜像所需的某些程序（多阶段构建的第一阶段）
 ├─ Dockerfile.cli:   命令行版镜像的 dockerfile
 ├─ Dockerfile.vncless: 构建无 VNC 的 GUI 版镜像的 docker

@@ -21,7 +21,8 @@ RUN . /tmp/build-scripts/config-apt.sh && \
         busybox libssl-dev iproute2 tinyproxy-bin libxss1 ca-certificates \
         fonts-wqy-microhei socat wget $qemu_pkgs $extra_pkgs && \
     if [ -n "$CHROMIUM" ]; then \
-        apt-get install -y --no-install-recommends --no-install-suggests chromium; \
+        apt-get install -y --no-install-recommends --no-install-suggests chromium xauth && \
+        useradd --create-home --shell /usr/sbin/nologin atrust-browser; \
     fi && \
     rm -rf /var/lib/apt/lists/*
 

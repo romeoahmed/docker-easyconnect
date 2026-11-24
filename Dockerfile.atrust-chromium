@@ -1,0 +1,31 @@
+# Native linux/arm64 aTrust with a VNC desktop and sandboxed Chromium.
+FROM docker.io/library/debian:trixie-slim@sha256:65d15c0ac2dd6639a130a05ffaf36b9d60697ef8d07125d79aecaaa9871bc97b AS trixie
+
+FROM trixie AS helpers
+RUN test "$(dpkg --print-architecture)" = arm64 && \
+    apt-get update && apt-get install -y --no-install-recommends gcc libc6-dev make
+COPY fake-getlogin /src/fake-getlogin
+COPY fake-hwaddr /src/fake-hwaddr
+RUN make -C /src/fake-getlogin && make -C /src/fake-hwaddr
+
+FROM trixie
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        busybox ca-certificates chromium flwm fonts-wqy-microhei iproute2 iptables kmod \
+        libgbm1 libnss3 libproxy1v5 libqt5widgets5t64 libqt5x11extras5 libx11-xcb1 libxss1 \
+        libxtst6 lsb-release microsocks procps psmisc socat stalonetray tigervnc-standalone-server tigervnc-tools \
+        tinyproxy-bin wget x11-utils xauth xclip && \
+    rm -rf /var/lib/apt/lists/* && \
+    useradd --create-home --shell /usr/sbin/nologin atrust-browser
+COPY --from=helpers /src/fake-getlogin/fake-getlogin.so /src/fake-hwaddr/fake-hwaddr.so /usr/local/lib/
+COPY docker-root-preinst /
+# aTrust writes this sysctl even when Podman has already set it.
+RUN dpkg-divert --local --rename --divert /usr/sbin/sysctl.real /usr/sbin/sysctl && \
+    ln -s sysctl-hook /usr/sbin/sysctl
+
+RUN cd /tmp && wget -q "https://atrustcdn.sangfor.com/standard/linux/2.5.16.41/uos/arm64/aTrustInstaller_arm64.deb" && \
+    echo 'e83bd009533c5ead315f60e85d981788f1df508af7b0989eeba724fd574650b2  aTrustInstaller_arm64.deb' | sha256sum -c - && \
+    dpkg -i aTrustInstaller_arm64.deb && rm aTrustInstaller_arm64.deb && \
+    echo ATRUST > /etc/vpn-type
+COPY docker-root /
+ENV CHROMIUM=1 PING_INTERVAL=1800
+CMD ["start.sh"]

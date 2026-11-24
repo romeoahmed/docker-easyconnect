@@ -1,8 +1,9 @@
 # 构建说明
 
-有三个类型的版本：
+按使用方式选择构建文件：
 
 - `Dockerfile`: 带 VNC 的图形界面版
+- `Dockerfile.atrust-chromium`: 带 Chromium 的 ARM64 aTrust 镜像
 - `Dockerfile.vncless`: 不带 VNC 的图形界面版（依赖于 X11 socket）
 - `Dockerfile.cli`: 纯命令行版
 
@@ -71,14 +72,12 @@ docker image build $(cat build-args/7.6.7-amd64.txt) -f Dockerfile.build -t hagb
 docker image build $(cat build-args/7.6.7-amd64.txt) --tag hagb/docker-easyconnect -f Dockerfile.vncless .
 ```
 
-### 构建带有 chromium 的 VNC 镜像
+### 构建带有 Chromium 的 VNC 镜像
 
-(使用本机代理，以 aTrust 为例)
+在仓库根目录构建 Debian 13 上的 aTrust 2.5.16.41 ARM64 镜像。
 
 ```bash
-git clone https://github.com/hagb/docker-easyconnect.git
-cd docker-easyconnect
-docker image build --network host $(cat build-args/atrust-arm64.txt) --build-arg http_proxy=${http_proxy} --build-arg https_proxy=${https_proxy} --build-arg MIRROR_URL="http://mirrors.ustc.edu.cn/debian/" -f Dockerfile.build -t hagb/docker-easyconnect:build .
-docker image build --network host $(cat build-args/atrust-arm64.txt) --build-arg http_proxy=${http_proxy} --build-arg https_proxy=${https_proxy} --build-arg CHROMIUM=1 --build-arg MIRROR_URL="http://mirrors.ustc.edu.cn/debian/" -f Dockerfile -t hagb/docker-atrust:chromium .
+podman build --platform linux/arm64 -f Dockerfile.atrust-chromium -t localhost/atrust-chromium:2.5.16.41 .
 ```
 
+[启动并登录 aTrust](usage.md#在-arm64-podman-中运行-atrust)。通用 VNC 镜像可在构建时加 `--build-arg CHROMIUM=1`，运行时加 `-e CHROMIUM=1`。

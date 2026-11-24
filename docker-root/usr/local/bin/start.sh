@@ -1,7 +1,7 @@
 #!/bin/bash
 eval "$(detect-iptables.sh)"
-eval "$(detect-route.sh)"
 eval "$(vpn-config.sh)"
+eval "$(detect-route.sh)"
 
 forward_ports() {
 	if [ -n "$FORWARD" ]; then
@@ -32,19 +32,31 @@ forward_ports() {
 	fi
 }
 
+start_socks() {
+	open_port 1080
+	if command -v microsocks >/dev/null; then
+		local auth=()
+		[ -n "$SOCKS_USER" ] && auth+=(-u "$SOCKS_USER")
+		[ -n "$SOCKS_PASSWD" ] && auth+=(-P "$SOCKS_PASSWD")
+		setpriv --reuid=nobody --regid=nogroup --clear-groups --no-new-privs --reset-env \
+			microsocks "${auth[@]}" &
+	else
+		start_danted
+	fi
+}
+
 start_danted() {
 	cp /etc/danted.conf.sample /run/danted.conf
 
 	if [[ -n "$SOCKS_PASSWD" && -n "$SOCKS_USER" ]];then
-		id $SOCKS_USER &> /dev/null
-		if [ $? -ne 0 ]; then
-			useradd $SOCKS_USER
+		if ! id -- "$SOCKS_USER" &> /dev/null; then
+			useradd -- "$SOCKS_USER" || return 1
 		fi
 
-		echo $SOCKS_USER:$SOCKS_PASSWD | chpasswd
+		printf '%s:%s\n' "$SOCKS_USER" "$SOCKS_PASSWD" | chpasswd || return 1
 		sed -i 's/socksmethod: none/socksmethod: username/g' /run/danted.conf
 
-		echo "use socks5 auth: $SOCKS_USER:$SOCKS_PASSWD"
+		echo "SOCKS5 username authentication enabled"
 	fi
 
 	internals=""
@@ -62,7 +74,6 @@ start_danted() {
 	externals="${externals}external: $VPN_TUN\\n"
 	sed /^internal:/c"$internals" -i /run/danted.conf
 	sed /^external:/c"$externals" -i /run/danted.conf
-	open_port 1080
 	if ip tuntap add mode tun $VPN_TUN; then
 		# eth0 need >1s to be ready
 		# refer to https://stackoverflow.com/questions/25226531/dante-sever-fail-to-bind-ip-by-interface-name-in-docker-container
@@ -141,21 +152,30 @@ init_vpn_config() {
 			done
 		}
 		## 容器退出时将配置文件同步回 /root/conf。感谢 @Einskai 的点子
-		trap "sync_ec2volume; exit;" SIGINT SIGQUIT SIGSTOP SIGTSTP SIGTERM
+		trap 'sync_ec2volume; exit' SIGINT SIGQUIT SIGTSTP SIGTERM
 	else
-		trap "exit;" SIGINT SIGQUIT SIGSTOP SIGTSTP SIGTERM
+		trap 'exit' SIGINT SIGQUIT SIGTSTP SIGTERM
 	fi
 }
 
 start_tigervncserver() {
-	# $PASSWORD 不为空时，更新 vnc 密码
-	[ -e ~/.vnc/passwd ] || (mkdir -p ~/.vnc && (echo password | tigervncpasswd -f > ~/.vnc/passwd)) 
-	[ -n "$PASSWORD" ] && printf %s "$PASSWORD" | tigervncpasswd -f > ~/.vnc/passwd
-
-	VNC_SIZE="${VNC_SIZE:-1110x620}"
+	local config_home=${XDG_CONFIG_HOME:-$HOME/.config}
+	local vnc_dir=$HOME/.vnc
+	# 让 TigerVNC 先迁移旧目录，再读写密码。
+	mkdir -p "$config_home" && tigervncserver -list >/dev/null || return 1
+	if [ ! -d "$vnc_dir" ] && [ -d "$config_home/tigervnc" ]; then
+		vnc_dir=$config_home/tigervnc
+	fi
+	if [ -n "$PASSWORD" ] || [ ! -f "$vnc_dir/passwd" ]; then
+		(umask 077; printf %s "${PASSWORD:-password}" | tigervncpasswd -f > "$vnc_dir/passwd") || return 1
+	fi
+	chmod 600 "$vnc_dir/passwd" || return 1
 
 	open_port 5901
-	tigervncserver "$DISPLAY" -geometry "$VNC_SIZE" -localhost no -passwd ~/.vnc/passwd -xstartup flwm
+	tigervncserver "$DISPLAY" -geometry "${VNC_SIZE:-1110x620}" -localhost no -PasswordFile "$vnc_dir/passwd" -xstartup flwm
+}
+
+start_vnc_tools() {
 	stalonetray -f 0 2> /dev/null &
 
 	if [ -n "$ECPASSWORD" ]; then
@@ -175,6 +195,18 @@ start_tigervncserver() {
 		novnc
 	fi
 
+}
+
+start_chromium() {
+	local runtime_dir=/run/atrust-browser
+	local authority=/run/atrust-browser.Xauthority
+	install -d -m 0700 -o atrust-browser -g atrust-browser "$runtime_dir" || return 1
+	install -m 0640 -g atrust-browser /dev/null "$authority" || return 1
+	xauth extract - "$DISPLAY" > "$authority" || return 1
+	runuser -u atrust-browser -- env -i HOME=/home/atrust-browser USER=atrust-browser \
+		PATH="$PATH" LANG="${LANG:-C.UTF-8}" DISPLAY="$DISPLAY" XAUTHORITY="$authority" \
+		XDG_RUNTIME_DIR="$runtime_dir" chromium --no-first-run &
+	disown
 }
 
 keep_pinging() {
@@ -198,23 +230,22 @@ done
 
 ulimit -n 1048576 # https://github.com/Hagb/docker-easyconnect/issues/245 @rikaunite
 forward_ports &
-start_danted &
+if [ -z "$NODANTED" ]; then
+	start_socks &
+fi
 start_tinyproxy &
 config_vpn_iptables &
 force_open_ports &
 keep_pinging &
 keep_pinging_url &
-if [ -z "$DISPLAY" ]
-then
+if [ -z "$DISPLAY" ] && command -v tigervncserver >/dev/null; then
 	export DISPLAY=:1
-	start_tigervncserver &
+	start_tigervncserver || exit 1
+	start_vnc_tools &
 fi
 
-# 环境变量 CHROMIUM 不为空时，删除可能存在的锁，并启动 chromium
 if [ -n "$CHROMIUM" ]; then
-    rm -rf /root/.config/chromium/
-    bash -c "chromium --no-sandbox" &
-    disown
+	start_chromium || exit 1
 fi
 
 init_vpn_config
